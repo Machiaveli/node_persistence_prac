@@ -4,7 +4,10 @@ const responseTime = require('response-time')
 const axios = require('axios');
 const redis = require('redis');
 const path = require('path');
+const apiRouter = require('./routes/api');
 var bodyParser = require('body-parser');
+var s3Manager = require('./lib/s3_manager');
+var constants = require('./lib/shared_constants');
 var AWS = require("aws-sdk");
 
 // Init app
@@ -29,36 +32,14 @@ app.use(bodyParser.json());
 app.use(responseTime());
 
 //aws config
-AWS.config.update({region: 'ap-southeast-2'});
-AWS.config.credentials = new AWS.SharedIniFileCredentials({profile: '901444280953_CAB432-STUDENT'});
+AWS.config.update({region: constants.AWS_REGION});
+AWS.config.credentials = new AWS.SharedIniFileCredentials({profile: constants.AWS_PROFILE_NAME});
 
-app.get('/api/search', (req, res) => {
-    const query = (req.query.query).trim();
+//Init bucket
+new s3Manager().initBucket(constants.S3_DEFAULT_BUCKET_NAME);
 
-    // Construct the wiki URL and key
-    const searchUrl = `https://en.wikipedia.org/w/api.php?action=parse&format=json&section=0&page=${query}`;
-    const redisKey = `wikipedia:${query}`;
-   // Try the cache
-    return redisClient.get(redisKey, (err, result) => {
-   
-        if (result) {
-            // Serve from Cache
-            const resultJSON = JSON.parse(result);
-            return res.status(200).json(resultJSON);
-        } else {
-            // Serve from Wikipedia API and store in cache
-            return axios.get(searchUrl)
-                .then(response => {
-                    const responseJSON = response.data;
-                    redisClient.setex(redisKey, 3600, JSON.stringify({ source: 'Redis Cache', ...responseJSON, }));
-                    return res.status(200).json({ source: 'Wikipedia API', ...responseJSON, });
-                })
-                .catch(err => {
-                    return res.json(err);
-                });
-        }
-    });
-});
+//Set router(s)
+app.use('/api', apiRouter); 
 
 // Start server
 app.listen(port, function () {

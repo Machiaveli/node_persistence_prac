@@ -6,13 +6,11 @@ const redis = require('redis');
 const path = require('path');
 var bodyParser = require('body-parser');
 var AWS = require("aws-sdk");
-// const defaultRouter = require('./routes/default');
 
 // Init app
 const app = express();
 const hostname = '127.0.0.1';
 const port = 3000;
-const aws_profile = '901444280953_CAB432-STUDENT';
 
 //Load views engine
 app.set('views', path.join(__dirname, 'views'));
@@ -30,20 +28,9 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 app.use(responseTime());
 
-var credentials = new AWS.SharedIniFileCredentials({profile: aws_profile});
-AWS.config.credentials = credentials;
-console.log(AWS.config.credentials.accessKeyId);
-
-// app.use('/css', express.static(path.join(__dirname, 'node_modules/bootstrap/dist/css')));
-// app.use('/css', express.static(path.join(__dirname, 'public/css')));
-// app.use('/scss', express.static(path.join(__dirname, 'node_modules/bootstrap/scss')));
-// app.use('/js', express.static(path.join(__dirname, 'node_modules/bootstrap/dist/js')));
-// app.use('/js', express.static(path.join(__dirname, 'node_modules/jquery/dist')));
-// app.use('/js', express.static(path.join(__dirname, 'node_modules/@fortawesome/fontawesome-free/js')));
-// app.use('/js', express.static(path.join(__dirname, 'public/js')));
-
-
-// app.use('/', defaultRouter); 
+//aws config
+AWS.config.update({region: 'ap-southeast-2'});
+AWS.config.credentials = new AWS.SharedIniFileCredentials({profile: '901444280953_CAB432-STUDENT'});
 
 app.get('/api/search', (req, res) => {
     const query = (req.query.query).trim();

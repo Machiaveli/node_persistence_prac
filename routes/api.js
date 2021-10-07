@@ -1,5 +1,6 @@
 const express = require('express');
 const axios = require("axios");
+const redisClient = require ('../lib/redis_client');
 const router = express.Router();
 var AWS = require("aws-sdk");
 const constants = require('../lib/shared_constants');

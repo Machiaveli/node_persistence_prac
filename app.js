@@ -2,7 +2,6 @@ const express = require('express');
 const logger = require('morgan');
 const responseTime = require('response-time')
 const axios = require('axios');
-const redis = require('redis');
 const path = require('path');
 const apiRouter = require('./routes/api');
 var bodyParser = require('body-parser');
@@ -18,12 +17,6 @@ const port = 3000;
 //Load views engine
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'pug');
-
-// This section will change for Cloud Services
-const redisClient = redis.createClient();
-redisClient.on('error', (err) => {
- console.log("Error " + err);
-});
 
 // Load required files
 app.use(logger('tiny'));

@@ -1,34 +1,63 @@
 const express = require('express');
 const axios = require("axios");
-const redisClient = require ('../lib/redis_client');
 const router = express.Router();
-var AWS = require("aws-sdk");
 const constants = require('../lib/shared_constants');
+const redisClient = require('../lib/redis_client');
+var AWS = require("aws-sdk");
 
 router.get('/search', (req, res) => {
     const query = (req.query.query).trim();
 
-    // Construct the wiki URL and key
+    console.log(`** Search Query Received: ${query} **`);
+
+    // Construct the wiki URL and keys
     const searchUrl = `${constants.WIKIPEDIA_API_URL}${query}`;
-    const redisKey = `wikipedia:${query}`;
+    const redisKey = `${constants.WIKIPEDIA_REDIS_KEY_PREFIX}${query}`;
+    const s3Key = `${constants.WIKIPEDIA_S3_PREFIX}${query}`;
+
     // Try the cache
-    return redisClient.get(redisKey, (err, result) => {
-   
-        if (result) {
+    console.log(`Querying cache for key ${redisKey}.`);
+    return redisClient.get(redisKey, (err, redisResult) => {
+        if (redisResult) {
             // Serve from Cache
-            const resultJSON = JSON.parse(result);
+            console.log(`Key found in cache. Serving from cache.`);
+            const resultJSON = JSON.parse(redisResult);
             return res.status(200).json(resultJSON);
         } else {
-            // Serve from Wikipedia API and store in cache
-            return axios.get(searchUrl)
-                .then(response => {
-                    const responseJSON = response.data;
-                    redisClient.setex(redisKey, 3600, JSON.stringify({ source: 'Redis Cache', ...responseJSON, }));
-                    return res.status(200).json({ source: 'Wikipedia API', ...responseJSON, });
-                })
-                .catch(err => {
-                    return res.json(err);
-                });
+            console.log(`Key not found in cache.`);
+
+            //Check S3
+            console.log(`Querying S3 for ${constants.S3_DEFAULT_BUCKET_NAME}/${s3Key}`);
+            const params = { Bucket: constants.S3_DEFAULT_BUCKET_NAME, Key: s3Key};
+            return new AWS.S3({apiVersion: constants.S3_API_VERSION}).getObject(params, (err, s3Result) => {
+                if (s3Result) {
+                    //Store in cache and serve
+                    console.log(`Key found in S3. Storing in Cache and serving from S3.`);
+                    const resultJSON = JSON.parse(s3Result.Body);
+                    storeInCache(redisKey, resultJSON.parse)
+                        .then(() => {
+                            return res.status(200).json(resultJSON);
+                        });
+                } else {
+                    // Serve from Wikipedia API and store in S3 and cache
+                    console.log(`Key not found in S3. Querying Wikipedia API.`);
+                    return axios.get(searchUrl)
+                    .then(apiResponse => {
+                        console.log(`Result found in Wikipedia API. Storing in Cache and S3.`);
+                        const jsonData = apiResponse.data;
+                        storeInCache(redisKey, jsonData)
+                        .then(() => {
+                            storeInS3(s3Key, jsonData)
+                            .then(() => {
+                                return res.status(200).json({ source: 'Wikipedia API', ...jsonData, });
+                            });
+                        })
+                    })
+                    .catch(err => {
+                        return res.json(err);
+                    });
+                }
+            });
         }
     });
 });
@@ -36,9 +65,11 @@ router.get('/search', (req, res) => {
 router.get('/store', (req, res) => {
     const key = (req.query.key).trim();
    
+    console.log(`** Store Request Received: ${key} **`);
+
     // Construct the wiki URL and S3 key
     const searchUrl = `${constants.WIKIPEDIA_API_URL}${key}`;
-    const s3Key = `wikipedia-${key}`;
+    const s3Key = `${constants.WIKIPEDIA_S3_PREFIX}${key}`;
    
     // Check S3
     const params = { Bucket: constants.S3_DEFAULT_BUCKET_NAME, Key: s3Key};
@@ -46,27 +77,44 @@ router.get('/store', (req, res) => {
     return new AWS.S3({apiVersion: constants.S3_API_VERSION}).getObject(params, (err, result) => {
         if (result) {
             // Serve from S3
+            console.log(`Key already exists in S3. Serving from S3.`);
             console.log(result);
             const resultJSON = JSON.parse(result.Body);
             return res.status(200).json(resultJSON);
         } else {
             // Serve from Wikipedia API and store in S3
+            console.log(`Key not found in S3. Querying Wikipedia API and storing response in S3.`);
             return axios.get(searchUrl)
-                .then(response => {
-                    const responseJSON = response.data;
-                    const body = JSON.stringify({ source: 'S3 Bucket', ...responseJSON});
-                    const objectParams = {Bucket: constants.S3_DEFAULT_BUCKET_NAME, Key: s3Key, Body: body};
-                    const uploadPromise = new AWS.S3({apiVersion: constants.S3_API_VERSION}).putObject(objectParams).promise();
-                    uploadPromise.then(function(data) {
-                        console.log("Successfully uploaded data to " + constants.S3_DEFAULT_BUCKET_NAME + "/" + s3Key);
-                    });
-                    return res.status(200).json({ source: 'Wikipedia API', ...responseJSON, });
-                })
-                .catch(err => {
-                    return res.json(err);
+            .then(response => {
+                const jsonData = response.data;
+                storeInS3(s3Key, jsonData)
+                .then(() => {
+                    return res.status(200).json({ source: 'Wikipedia API', ...jsonData, });
                 });
+            })
+            .catch(err => {
+                return res.json(err);
+            });
         }
     });
 });
+
+function storeInCache(key, jsonData) {
+    return new Promise((resolve) => {
+        redisClient.setex(key, 3600, JSON.stringify({ source: 'Redis Cache', ...jsonData, }));
+        console.log(`Succesfully stored data in cache under key: ${key}`);
+        resolve(jsonData);
+    });
+}
+
+function storeInS3(key, jsonData) {
+    const body = JSON.stringify({ source: 'S3 Bucket', ...jsonData});
+    const objectParams = {Bucket: constants.S3_DEFAULT_BUCKET_NAME, Key: key, Body: body};
+    const uploadPromise = new AWS.S3({apiVersion: constants.S3_API_VERSION}).putObject(objectParams).promise();
+    return uploadPromise.then(function(data) {
+        console.log(`Successfully uploaded data to S3 under ${constants.S3_DEFAULT_BUCKET_NAME}/${key}`);
+        return jsonData;
+    });
+}
 
 module.exports = router;
